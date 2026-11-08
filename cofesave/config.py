@@ -57,10 +57,10 @@ class Settings:
             data_dir=Path(os.getenv("DATA_DIR", str(ROOT / "data"))).resolve(),
             download_dir=Path(os.getenv("DOWNLOAD_DIR", str(ROOT / "downloads"))).resolve(),
             workers=integer("WORKERS", 2, 1, 4),
-            max_queue=integer("MAX_QUEUE_SIZE", 20, 1, 100),
-            cooldown=integer("USER_COOLDOWN_SECONDS", 15, 1, 3600),
+            max_queue=integer("MAX_QUEUE_SIZE", 0, 0, 10000),
+            cooldown=integer("USER_COOLDOWN_SECONDS", 0, 0, 3600),
             max_bytes=integer("MAX_FILE_MB", 48, 1, 48) * 1_000_000,
-            max_duration=integer("MAX_DURATION_SECONDS", 1200, 10, 7200),
+            max_duration=integer("MAX_DURATION_SECONDS", 0, 0, 86400),
             download_timeout=integer("DOWNLOAD_TIMEOUT_SECONDS", 180, 10, 600),
             cookies_file=cookies,
         )

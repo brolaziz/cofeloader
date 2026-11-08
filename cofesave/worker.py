@@ -25,7 +25,7 @@ def options(directory: Path, max_bytes: int, max_duration: int, cookies: str | N
     def match_filter(info: dict, *, incomplete: bool = False) -> str | None:
         if info.get("is_live") or info.get("live_status") == "is_live":
             return "COFE_LIVE"
-        if (info.get("duration") or 0) > max_duration:
+        if max_duration and (info.get("duration") or 0) > max_duration:
             return "COFE_DURATION"
         if (info.get("filesize") or 0) > max_bytes:
             return "COFE_SIZE"

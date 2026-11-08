@@ -49,27 +49,16 @@ class JobManager:
         if not message.from_user:
             return
         user_id = message.from_user.id
-        now = time.monotonic()
-        # Drop expired entries rather than retaining every user forever.
-        self.cooldowns = {uid: until for uid, until in self.cooldowns.items() if until > now}
         if not self.accepting:
             await message.answer("Bot qayta ishga tushmoqda. Birozdan keyin urinib ko'ring.")
             return
-        if user_id in self.busy:
-            await message.answer("Oldingi videongiz hali tayyorlanmoqda. Biroz kuting.")
-            return
-        if self.cooldowns.get(user_id, 0) > now:
-            await message.answer("Yangi havola yuborishdan oldin biroz kuting.")
-            return
-        # Includes reservations whose status message is still being sent.
-        if len(self.busy) >= self.settings.max_queue or self.queue.full():
+        if self.queue.full():
             await message.answer("Navbat to'lgan. Birozdan keyin qayta urinib ko'ring.")
             return
         self.busy.add(user_id)
         try:
             status = await message.answer("Havola qabul qilindi. Navbatda kuting…")
             self.queue.put_nowait(Job(message, status, link, user_id))
-            self.cooldowns[user_id] = now + self.settings.cooldown
         except BaseException:
             self.busy.discard(user_id)
             raise
