@@ -105,7 +105,10 @@ def download(url: str, directory: Path, max_bytes: int, duration: int, cookies: 
         return {"error": error_code(reason or "")}
     if files[0].stat().st_size > max_bytes:
         return {"error": "size"}
-    return {"filename": files[0].name, "title": str(info.get("title") or "Video")[:180]}
+    result = {"filename": files[0].name, "title": str(info.get("title") or "Video")[:180]}
+    if link.platform == "TikTok" and isinstance(info.get("id"), str):
+        result["tiktok_id"] = info["id"]
+    return result
 
 
 def main() -> None:

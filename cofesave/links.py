@@ -4,6 +4,7 @@ from urllib.parse import parse_qs, urlsplit
 
 URL_PATTERN = re.compile(r"https?://[^\s<>]+", re.IGNORECASE)
 VIDEO_ID = re.compile(r"^[A-Za-z0-9_-]{11}$")
+TIKTOK_VIDEO_PATH = re.compile(r"/@[^/]+/video/([0-9]+)")
 DOMAINS = {
     "youtube.com": "YouTube",
     "www.youtube.com": "YouTube",
@@ -28,6 +29,13 @@ class LinkError(ValueError):
 class VideoLink:
     url: str
     platform: str
+    tiktok_id: str | None = None
+
+
+def tiktok_cache_key(video_id: object) -> str | None:
+    if isinstance(video_id, str) and re.fullmatch(r"[0-9]+", video_id):
+        return f"tiktok:{video_id}"
+    return None
 
 
 def parse_link(text: str) -> VideoLink:
@@ -66,8 +74,8 @@ def parse_link(text: str) -> VideoLink:
     if host in {"vm.tiktok.com", "vt.tiktok.com"}:
         if not re.fullmatch(r"/[A-Za-z0-9]+", path):
             raise LinkError("TikTok video havolasi noto'g'ri.")
-    elif not (re.fullmatch(r"/@[^/]+/video/\d+", path) or re.fullmatch(r"/t/[A-Za-z0-9]+", path)):
+        return VideoLink(f"https://{host}{path}/", platform)
+    match = TIKTOK_VIDEO_PATH.fullmatch(path)
+    if not match and not re.fullmatch(r"/t/[A-Za-z0-9]+", path):
         raise LinkError("TikTok profil emas, video havolasini yuboring.")
-    else:
-        host = "www.tiktok.com"
-    return VideoLink(f"https://{host}{path}/", platform)
+    return VideoLink(f"https://www.tiktok.com{path}/", platform, match[1] if match else None)

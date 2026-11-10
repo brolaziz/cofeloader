@@ -28,6 +28,10 @@ class Storage:
                 bot_id INTEGER NOT NULL, cached INTEGER NOT NULL,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
+            CREATE TABLE IF NOT EXISTS video_aliases (
+                bot_id INTEGER NOT NULL, url TEXT NOT NULL, cache_key TEXT NOT NULL,
+                PRIMARY KEY (bot_id, url)
+            );
         """)
 
     def add_user(self, user_id: int) -> None:
@@ -39,6 +43,19 @@ class Storage:
             "SELECT file_id, title FROM videos WHERE bot_id=? AND url=?", (self.bot_id, url)
         ).fetchone()
         return CachedVideo(*row) if row else None
+
+    def alias_for(self, url: str) -> str | None:
+        row = self.db.execute(
+            "SELECT cache_key FROM video_aliases WHERE bot_id=? AND url=?", (self.bot_id, url)
+        ).fetchone()
+        return row[0] if row else None
+
+    def remember_alias(self, url: str, cache_key: str) -> None:
+        with self.db:
+            self.db.execute(
+                "INSERT OR REPLACE INTO video_aliases VALUES (?, ?, ?)",
+                (self.bot_id, url, cache_key),
+            )
 
     def save(self, url: str, video: CachedVideo) -> None:
         with self.db:

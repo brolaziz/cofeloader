@@ -9,8 +9,8 @@ from aiogram.exceptions import TelegramAPIError, TelegramBadRequest
 from aiogram.types import FSInputFile, Message
 
 from cofesave.config import Settings
-from cofesave.downloader import DownloadFailure, fetch
-from cofesave.links import VideoLink
+from cofesave.downloader import DownloadFailure, fetch, resolve_tiktok_short_link
+from cofesave.links import VideoLink, tiktok_cache_key
 from cofesave.storage import CachedVideo, Storage
 
 logger = logging.getLogger(__name__)
@@ -53,41 +53,63 @@ class JobManager:
         finally:
             self.tasks.discard(task)
 
-    async def deliver(self, message: Message, link: VideoLink) -> None:
-        cached = self.storage.get(link.url)
-        if cached:
-            try:
-                await message.answer_video(
-                    cached.file_id, caption=caption(cached.title, link.platform)
+    async def send_cached(self, message: Message, platform: str, key: str) -> bool:
+        cached = self.storage.get(key)
+        if cached is None:
+            return False
+        try:
+            await message.answer_video(cached.file_id, caption=caption(cached.title, platform))
+        except TelegramBadRequest as error:
+            # Only invalidate a stale file ID, not unrelated delivery errors.
+            if not any(
+                term in error.message.lower()
+                for term in (
+                    "file identifier",
+                    "file_id",
+                    "wrong remote file",
+                    "file reference expired",
                 )
-            except TelegramBadRequest as error:
-                # Only invalidate a stale file ID, not unrelated delivery errors.
-                if not any(
-                    term in error.message.lower()
-                    for term in (
-                        "file identifier",
-                        "file_id",
-                        "wrong remote file",
-                        "file reference expired",
-                    )
-                ):
-                    raise
-                if self.storage.get(link.url) == cached:
-                    self.storage.discard(link.url)
-            else:
-                self.storage.delivered(cached=True)
-                return
+            ):
+                raise
+            if self.storage.get(key) == cached:
+                self.storage.discard(key)
+            return False
+        self.storage.delivered(cached=True)
+        return True
+
+    async def deliver(self, message: Message, link: VideoLink) -> None:
+        original_url = link.url
+        short_tiktok = link.platform == "TikTok" and link.tiktok_id is None
+        cache_key = (
+            self.storage.alias_for(original_url)
+            if short_tiktok
+            else tiktok_cache_key(link.tiktok_id)
+        )
+        if cache_key and await self.send_cached(message, link.platform, cache_key):
+            return
+        if await self.send_cached(message, link.platform, original_url):
+            return
+
+        if short_tiktok and cache_key is None:
+            link = await resolve_tiktok_short_link(link)
+            resolved_key = tiktok_cache_key(link.tiktok_id)
+            if resolved_key:
+                for key in (resolved_key, link.url):
+                    if await self.send_cached(message, link.platform, key):
+                        self.storage.remember_alias(original_url, key)
+                        return
+
         if self.active_downloads >= self.settings.workers:
             await message.answer("Yuklash joylari band. Havolani qayta yuboring.")
             return
 
         self.active_downloads += 1
         try:
-            await self.download_and_send(message, link)
+            await self.download_and_send(message, link, original_url if short_tiktok else None)
         finally:
             self.active_downloads -= 1
 
-    async def download_and_send(self, message: Message, link: VideoLink) -> None:
+    async def download_and_send(self, message: Message, link: VideoLink, alias: str | None) -> None:
         with TemporaryDirectory(prefix="cofesave-", dir=self.settings.download_dir) as directory:
             started = time.monotonic()
             video = await fetch(link.url, Path(directory), self.settings)
@@ -105,7 +127,10 @@ class JobManager:
                 time.monotonic() - downloaded,
             )
             if sent.video:
-                self.storage.save(link.url, CachedVideo(sent.video.file_id, video.title))
+                key = tiktok_cache_key(video.tiktok_id or link.tiktok_id) or link.url
+                self.storage.save(key, CachedVideo(sent.video.file_id, video.title))
+                if alias and alias != key:
+                    self.storage.remember_alias(alias, key)
             self.storage.delivered(cached=False)
 
     async def stop(self) -> None:

@@ -2,11 +2,37 @@ import asyncio
 import json
 from dataclasses import replace
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from cofesave.downloader import DownloadFailure, fetch
+from cofesave.downloader import DownloadFailure, fetch, resolve_tiktok_short_link
+from cofesave.links import parse_link
+
+
+@pytest.mark.parametrize(
+    "location,video_id",
+    [
+        ("https://www.tiktok.com/@creator/video/12345?tracking=1", "12345"),
+        ("http://127.0.0.1/internal", None),
+    ],
+)
+async def test_tiktok_redirect_is_checked_before_any_followup(location, video_id, monkeypatch):
+    short = parse_link("https://vt.tiktok.com/ZExample/")
+    session = MagicMock()
+    session.get.return_value.__aenter__.return_value = SimpleNamespace(
+        status=302, headers={"Location": location}
+    )
+    factory = MagicMock()
+    factory.return_value.__aenter__.return_value = session
+    monkeypatch.setattr("cofesave.downloader.ClientSession", factory)
+
+    result = await resolve_tiktok_short_link(short)
+
+    session.get.assert_called_once_with(short.url, allow_redirects=False)
+    assert result.tiktok_id == video_id
+    if video_id is None:
+        assert result == short
 
 
 async def test_valid_result_and_token_not_in_child_environment(settings, tmp_path, monkeypatch):

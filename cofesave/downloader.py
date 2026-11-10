@@ -6,8 +6,12 @@ import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import urljoin
+
+from aiohttp import ClientError, ClientSession, ClientTimeout
 
 from cofesave.config import ROOT, Settings
+from cofesave.links import VideoLink, parse_link
 
 ERRORS = {
     "size": "Video hajmi limitdan katta. Qisqaroq video yuboring.",
@@ -29,6 +33,21 @@ class DownloadFailure(Exception):
 class DownloadedVideo:
     path: Path
     title: str
+    tiktok_id: str | None = None
+
+
+async def resolve_tiktok_short_link(link: VideoLink) -> VideoLink:
+    """Read the first redirect without following it or downloading media."""
+    try:
+        async with ClientSession(timeout=ClientTimeout(total=3)) as session:
+            async with session.get(link.url, allow_redirects=False) as response:
+                location = response.headers.get("Location")
+                if not 300 <= response.status < 400 or not location:
+                    return link
+        target = parse_link(urljoin(link.url, location))
+    except (ClientError, TimeoutError, ValueError):
+        return link
+    return target if target.tiktok_id else link
 
 
 def directory_size(directory: Path) -> int:
@@ -55,7 +74,7 @@ def read_result(directory: Path, max_bytes: int) -> DownloadedVideo:
         raise DownloadFailure("unavailable")
     if path.stat().st_size > max_bytes:
         raise DownloadFailure("size")
-    return DownloadedVideo(path, result["title"])
+    return DownloadedVideo(path, result["title"], result.get("tiktok_id"))
 
 
 async def stop_process(process: asyncio.subprocess.Process) -> None:

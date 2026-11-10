@@ -3,6 +3,7 @@ from dataclasses import replace
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
+import pytest
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.methods import SendVideo
 
@@ -12,6 +13,53 @@ from cofesave.links import parse_link
 from cofesave.storage import CachedVideo
 
 LINK = parse_link("https://youtu.be/dQw4w9WgXcQ")
+TIKTOK_SHORT = parse_link("https://vt.tiktok.com/ZExample/")
+TIKTOK_FULL = parse_link("https://www.tiktok.com/@creator/video/7663144858546277655")
+
+
+@pytest.mark.parametrize("short_first", [True, False])
+async def test_tiktok_short_and_full_links_share_cache(
+    short_first, settings, storage, message, monkeypatch
+):
+    async def download(url, directory, config):
+        path = directory / "video.mp4"
+        path.write_bytes(b"video")
+        return DownloadedVideo(path, "TikTok", TIKTOK_FULL.tiktok_id)
+
+    fetch = AsyncMock(side_effect=download)
+    # The short-first case exercises the downloader's own redirect handling.
+    resolve = AsyncMock(return_value=TIKTOK_SHORT if short_first else TIKTOK_FULL)
+    monkeypatch.setattr("cofesave.jobs.fetch", fetch)
+    monkeypatch.setattr("cofesave.jobs.resolve_tiktok_short_link", resolve)
+    manager = JobManager(settings, storage)
+    first, second = (TIKTOK_SHORT, TIKTOK_FULL) if short_first else (TIKTOK_FULL, TIKTOK_SHORT)
+
+    await manager.handle(message, first)
+    await manager.handle(message, second)
+    await manager.handle(message, TIKTOK_SHORT)
+
+    fetch.assert_awaited_once()
+    resolve.assert_awaited_once_with(TIKTOK_SHORT)
+    assert message.answer_video.call_args.args[0] == "telegram-file-123"
+    assert storage.stats()[1:] == (1, 3, 2)
+
+
+async def test_tiktok_short_link_uses_legacy_full_url_cache(
+    settings, storage, message, monkeypatch
+):
+    storage.save(TIKTOK_FULL.url, CachedVideo("old-file", "TikTok"))
+    download = AsyncMock()
+    resolve = AsyncMock(return_value=TIKTOK_FULL)
+    monkeypatch.setattr("cofesave.jobs.fetch", download)
+    monkeypatch.setattr("cofesave.jobs.resolve_tiktok_short_link", resolve)
+    manager = JobManager(settings, storage)
+
+    await manager.handle(message, TIKTOK_SHORT)
+    await manager.handle(message, TIKTOK_SHORT)
+
+    download.assert_not_awaited()
+    resolve.assert_awaited_once()
+    assert message.answer_video.call_args.args[0] == "old-file"
 
 
 async def test_busy_download_returns_immediately(settings, storage, message, monkeypatch):
