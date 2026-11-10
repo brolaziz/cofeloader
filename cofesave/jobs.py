@@ -1,9 +1,7 @@
 import asyncio
-import hashlib
 import logging
 import time
 from contextlib import suppress
-from dataclasses import dataclass
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -18,15 +16,6 @@ from cofesave.storage import CachedVideo, Storage
 logger = logging.getLogger(__name__)
 
 
-@dataclass
-class Job:
-    message: Message
-    status: Message
-    link: VideoLink
-    user_id: int
-    queued_at: float | None = None
-
-
 def caption(title: str, platform: str) -> str:
     return f"{title[:180]}\n\n{platform} • @cofesavebot"
 
@@ -35,67 +24,41 @@ class JobManager:
     def __init__(self, settings: Settings, storage: Storage) -> None:
         self.settings = settings
         self.storage = storage
-        self.queue: asyncio.Queue[Job] = asyncio.Queue(maxsize=settings.max_queue)
-        self.busy: set[int] = set()
-        self.tasks: list[asyncio.Task] = []
-        # Bounded locks deduplicate simultaneous requests for the same canonical URL.
-        self.locks = [asyncio.Lock() for _ in range(64)]
+        self.tasks: set[asyncio.Task] = set()
+        self.active_downloads = 0
         self.accepting = True
 
-    def start(self) -> None:
-        self.tasks = [asyncio.create_task(self.worker()) for _ in range(self.settings.workers)]
-
-    async def enqueue(self, message: Message, link: VideoLink) -> None:
+    async def handle(self, message: Message, link: VideoLink) -> None:
         if not message.from_user:
             return
-        user_id = message.from_user.id
         if not self.accepting:
-            await message.answer("Bot qayta ishga tushmoqda. Birozdan keyin urinib ko'ring.")
             return
-        if self.queue.full():
-            await message.answer("Navbat to'lgan. Birozdan keyin qayta urinib ko'ring.")
-            return
-        self.busy.add(user_id)
+        task = asyncio.current_task()
+        assert task is not None
+        self.tasks.add(task)
         try:
-            status = await message.answer("Havola qabul qilindi. Video tayyorlanmoqda…")
-            self.queue.put_nowait(Job(message, status, link, user_id, time.monotonic()))
-        except BaseException:
-            self.busy.discard(user_id)
-            raise
+            await self.deliver(message, link)
+        except DownloadFailure as error:
+            logger.info("%s download failed: %s", link.platform, error.code)
+            with suppress(TelegramAPIError):
+                await message.answer(str(error))
+        except TelegramAPIError as error:
+            logger.warning("Telegram delivery failed: %s", type(error).__name__)
+            with suppress(TelegramAPIError):
+                await message.answer("Videoni yuborib bo'lmadi. Keyinroq qayta urinib ko'ring.")
+        except Exception as error:
+            logger.error("Job failed: %s", type(error).__name__)
+            with suppress(TelegramAPIError):
+                await message.answer("Xatolik yuz berdi. Keyinroq qayta urinib ko'ring.")
+        finally:
+            self.tasks.discard(task)
 
-    async def worker(self) -> None:
-        while True:
-            job = await self.queue.get()
-            try:
-                stripe = int.from_bytes(hashlib.sha256(job.link.url.encode()).digest()[:2]) % 64
-                async with self.locks[stripe]:
-                    await self.process(job)
-            except asyncio.CancelledError:
-                await self.status(job, "Bot qayta ishga tushmoqda. Havolani qayta yuboring.")
-                raise
-            except DownloadFailure as error:
-                logger.info("%s download failed: %s", job.link.platform, error.code)
-                await self.status(job, str(error))
-            except TelegramAPIError as error:
-                logger.warning("Telegram delivery failed: %s", type(error).__name__)
-                await self.status(job, "Videoni yuborib bo'lmadi. Keyinroq qayta urinib ko'ring.")
-            except Exception as error:
-                logger.error("Job failed: %s", type(error).__name__)
-                await self.status(job, "Xatolik yuz berdi. Keyinroq qayta urinib ko'ring.")
-            finally:
-                self.busy.discard(job.user_id)
-                self.queue.task_done()
-
-    async def status(self, job: Job, text: str) -> None:
-        with suppress(TelegramAPIError):
-            await job.status.edit_text(text)
-
-    async def process(self, job: Job) -> None:
-        cached = self.storage.get(job.link.url)
+    async def deliver(self, message: Message, link: VideoLink) -> None:
+        cached = self.storage.get(link.url)
         if cached:
             try:
-                await job.message.answer_video(
-                    cached.file_id, caption=caption(cached.title, job.link.platform)
+                await message.answer_video(
+                    cached.file_id, caption=caption(cached.title, link.platform)
                 )
             except TelegramBadRequest as error:
                 # Only invalidate a stale file ID, not unrelated delivery errors.
@@ -109,42 +72,45 @@ class JobManager:
                     )
                 ):
                     raise
-                self.storage.discard(job.link.url)
+                if self.storage.get(link.url) == cached:
+                    self.storage.discard(link.url)
             else:
                 self.storage.delivered(cached=True)
-                with suppress(TelegramAPIError):
-                    await job.status.delete()
                 return
+        if self.active_downloads >= self.settings.workers:
+            await message.answer("Yuklash joylari band. Havolani qayta yuboring.")
+            return
+
+        self.active_downloads += 1
+        try:
+            await self.download_and_send(message, link)
+        finally:
+            self.active_downloads -= 1
+
+    async def download_and_send(self, message: Message, link: VideoLink) -> None:
         with TemporaryDirectory(prefix="cofesave-", dir=self.settings.download_dir) as directory:
             started = time.monotonic()
-            video = await fetch(job.link.url, Path(directory), self.settings)
+            video = await fetch(link.url, Path(directory), self.settings)
             downloaded = time.monotonic()
-            sent = await job.message.answer_video(
+            sent = await message.answer_video(
                 FSInputFile(video.path, filename="cofesave.mp4"),
-                caption=caption(video.title, job.link.platform),
+                caption=caption(video.title, link.platform),
                 supports_streaming=True,
                 request_timeout=120,
             )
             logger.info(
-                "%s delivered: queue=%.2fs download=%.2fs upload=%.2fs",
-                job.link.platform,
-                started - job.queued_at if job.queued_at is not None else 0,
+                "%s delivered: download=%.2fs upload=%.2fs",
+                link.platform,
                 downloaded - started,
                 time.monotonic() - downloaded,
             )
             if sent.video:
-                self.storage.save(job.link.url, CachedVideo(sent.video.file_id, video.title))
+                self.storage.save(link.url, CachedVideo(sent.video.file_id, video.title))
             self.storage.delivered(cached=False)
-        with suppress(TelegramAPIError):
-            await job.status.delete()
 
     async def stop(self) -> None:
         self.accepting = False
-        for task in self.tasks:
+        tasks = tuple(self.tasks)
+        for task in tasks:
             task.cancel()
-        await asyncio.gather(*self.tasks, return_exceptions=True)
-        while not self.queue.empty():
-            job = self.queue.get_nowait()
-            await self.status(job, "Bot qayta ishga tushmoqda. Havolani qayta yuboring.")
-            self.queue.task_done()
-        self.busy.clear()
+        await asyncio.gather(*tasks, return_exceptions=True)

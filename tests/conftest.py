@@ -17,8 +17,6 @@ def settings(tmp_path):
         data_dir=tmp_path,
         download_dir=downloads,
         workers=2,
-        max_queue=3,
-        cooldown=15,
         max_bytes=48_000_000,
         max_duration=1200,
         download_timeout=180,

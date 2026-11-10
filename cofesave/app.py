@@ -53,7 +53,7 @@ def router_for(settings: Settings, storage: Storage, jobs: JobManager) -> Router
         await message.answer(
             f"Foydalanuvchilar: {users}\nKeshdagi videolar: {videos}\n"
             f"Yuborilgan: {sent}\nKeshdan yuborilgan: {cached}\n"
-            f"Jarayonda / navbatda: {len(jobs.busy)}"
+            f"Jarayonda: {len(jobs.tasks)}"
         )
 
     @router.message(F.text)
@@ -66,7 +66,7 @@ def router_for(settings: Settings, storage: Storage, jobs: JobManager) -> Router
             return
         if message.from_user:
             storage.add_user(message.from_user.id)
-        await jobs.enqueue(message, link)
+        await jobs.handle(message, link)
 
     @router.message()
     async def other_message(message: Message) -> None:
@@ -113,7 +113,6 @@ async def main() -> None:
                 BotCommand(command="help", description="Yordam va limitlar"),
             ]
         )
-        jobs.start()
         await dispatcher.start_polling(
             bot,
             allowed_updates=dispatcher.resolve_used_update_types(),

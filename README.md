@@ -7,7 +7,8 @@ Python 3.12+, aiogram 3, yt-dlp, FFmpeg va Node.js 22 ishlatiladi.
 
 - O'zbekcha `/start` (welcome rasm bilan), `/help`, administrator uchun `/stats`.
 - Ochiq videolarni MP4 formatida, imkon bo'lsa 720p gacha yuborish.
-- Davomiylik chegarasi yo'q; parallel yuklash soni `WORKERS` bilan boshqariladi.
+- Davomiylik chegarasi yo'q. Yuklash darhol boshlanadi; `WORKERS` joylari band bo'lsa,
+  bot darhol xabar beradi. Keshdagi videolar yuklash joyini band qilmaydi.
 - Bir foydalanuvchi ketma-ket bir nechta video havola yubora oladi.
 - Bir xil havolalarni normallashtirish va Telegram `file_id` orqali qayta yuborish.
 - SQLite'da kesh, foydalanuvchi ID'lari va yuborishlar statistikasi; token saqlanmaydi.
@@ -54,7 +55,7 @@ Docker ichida FFmpeg va Node.js mavjud. Videolar vaqtinchalik saqlanadi, SQLite 
 5. Bitta replica ishlating. Domen, port, HTTP healthcheck va webhook kerak emas — long polling.
 6. Xarajat chegarasini Railway hisobingizda belgilang, sarfni kuzating.
 
-Navbat operativ xotirada: deploy / restart paytida tugallanmagan havolani qayta yuborish kerak.
+Deploy yoki restart paytida tugallanmagan havolani qayta yuborish kerak.
 SQLite bitta replica uchun mo'ljallangan. Bir nechta replica va katta yuklama uchun arxitekturani
 alohida queue va umumiy database'ga o'tkazish kerak.
 
@@ -98,7 +99,7 @@ uv pip install --python .venv\Scripts\python.exe -r requirements-dev.txt
 .venv\Scripts\python.exe -m compileall -q bot.py cofesave tests
 ```
 
-Testlar Telegram'ga ulanmaydi: URL chegaralari, format / limitlar, navbat, kesh,
+Testlar Telegram'ga ulanmaydi: URL chegaralari, format / limitlar, parallel yuklash, kesh,
 yuklash jarayonining timeout'i va tozalashini tekshiradi. Haqiqiy token bilan uchala
 platformaning ochiq videolarini alohida tekshirish zarur.
 

@@ -72,11 +72,11 @@ async def test_non_admin_cannot_read_stats(settings, storage, message):
 
 
 @pytest.mark.parametrize("chat_type", ["group", "supergroup"])
-async def test_group_video_link_is_queued(chat_type, settings, storage):
+async def test_group_video_link_is_handled(chat_type, settings, storage):
     bot = Bot("123456:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi")
     bot.session.make_request = AsyncMock()
     jobs = JobManager(settings, storage)
-    jobs.enqueue = AsyncMock()
+    jobs.handle = AsyncMock()
     dispatcher = Dispatcher()
     dispatcher.include_router(router_for(settings, storage, jobs))
     message = Message(
@@ -90,10 +90,10 @@ async def test_group_video_link_is_queued(chat_type, settings, storage):
     )
     try:
         await dispatcher.feed_update(bot, Update(update_id=10, message=message))
-        jobs.enqueue.assert_awaited_once()
-        queued, link = jobs.enqueue.call_args.args
-        assert queued.chat.id == -100123
-        assert queued.message_thread_id == message.message_thread_id
+        jobs.handle.assert_awaited_once()
+        received, link = jobs.handle.call_args.args
+        assert received.chat.id == -100123
+        assert received.message_thread_id == message.message_thread_id
         assert link.platform == "YouTube"
     finally:
         await bot.session.close()
@@ -105,7 +105,7 @@ async def test_group_chatter_is_ignored(chat_type, text, settings, storage):
     bot = Bot("123456:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi")
     bot.session.make_request = AsyncMock()
     jobs = JobManager(settings, storage)
-    jobs.enqueue = AsyncMock()
+    jobs.handle = AsyncMock()
     dispatcher = Dispatcher()
     dispatcher.include_router(router_for(settings, storage, jobs))
     try:
@@ -122,7 +122,7 @@ async def test_group_chatter_is_ignored(chat_type, text, settings, storage):
                 ),
             ),
         )
-        jobs.enqueue.assert_not_awaited()
+        jobs.handle.assert_not_awaited()
         bot.session.make_request.assert_not_awaited()
     finally:
         await bot.session.close()
