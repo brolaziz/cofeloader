@@ -19,10 +19,15 @@ brotli==1.2.1
 certifi==2026.10.23
     # via
     #   aiogram
+    #   curl-cffi
     #   requests
     #   yt-dlp
+cffi==2.1.1
+    # via curl-cffi
 charset-normalizer==3.5.2
     # via requests
+curl-cffi==0.17.0
+    # via yt-dlp
 frozenlist==1.8.0
     # via
     #   aiohttp
@@ -43,6 +48,8 @@ propcache==0.5.4
     # via
     #   aiohttp
     #   yarl
+pycparser==3.12
+    # via cffi
 pycryptodomex==3.24.1
     # via yt-dlp
 pydantic==2.13.5

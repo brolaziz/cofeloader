@@ -24,6 +24,7 @@ class Job:
     status: Message
     link: VideoLink
     user_id: int
+    queued_at: float | None = None
 
 
 def caption(title: str, platform: str) -> str:
@@ -36,7 +37,6 @@ class JobManager:
         self.storage = storage
         self.queue: asyncio.Queue[Job] = asyncio.Queue(maxsize=settings.max_queue)
         self.busy: set[int] = set()
-        self.cooldowns: dict[int, float] = {}
         self.tasks: list[asyncio.Task] = []
         # Bounded locks deduplicate simultaneous requests for the same canonical URL.
         self.locks = [asyncio.Lock() for _ in range(64)]
@@ -57,8 +57,8 @@ class JobManager:
             return
         self.busy.add(user_id)
         try:
-            status = await message.answer("Havola qabul qilindi. Navbatda kuting…")
-            self.queue.put_nowait(Job(message, status, link, user_id))
+            status = await message.answer("Havola qabul qilindi. Video tayyorlanmoqda…")
+            self.queue.put_nowait(Job(message, status, link, user_id, time.monotonic()))
         except BaseException:
             self.busy.discard(user_id)
             raise
@@ -74,6 +74,7 @@ class JobManager:
                 await self.status(job, "Bot qayta ishga tushmoqda. Havolani qayta yuboring.")
                 raise
             except DownloadFailure as error:
+                logger.info("%s download failed: %s", job.link.platform, error.code)
                 await self.status(job, str(error))
             except TelegramAPIError as error:
                 logger.warning("Telegram delivery failed: %s", type(error).__name__)
@@ -114,15 +115,22 @@ class JobManager:
                 with suppress(TelegramAPIError):
                     await job.status.delete()
                 return
-        await self.status(job, f"{job.link.platform} videosi yuklanmoqda…")
         with TemporaryDirectory(prefix="cofesave-", dir=self.settings.download_dir) as directory:
+            started = time.monotonic()
             video = await fetch(job.link.url, Path(directory), self.settings)
-            await self.status(job, "Video tayyor. Telegram'ga yuborilmoqda…")
+            downloaded = time.monotonic()
             sent = await job.message.answer_video(
                 FSInputFile(video.path, filename="cofesave.mp4"),
                 caption=caption(video.title, job.link.platform),
                 supports_streaming=True,
                 request_timeout=120,
+            )
+            logger.info(
+                "%s delivered: queue=%.2fs download=%.2fs upload=%.2fs",
+                job.link.platform,
+                started - job.queued_at if job.queued_at is not None else 0,
+                downloaded - started,
+                time.monotonic() - downloaded,
             )
             if sent.video:
                 self.storage.save(job.link.url, CachedVideo(sent.video.file_id, video.title))

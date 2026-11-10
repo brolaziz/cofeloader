@@ -2,6 +2,7 @@ import pytest
 from yt_dlp import YoutubeDL
 from yt_dlp.utils import DownloadError
 
+from cofesave.links import parse_link
 from cofesave.worker import error_code, options
 
 
@@ -23,6 +24,22 @@ def test_platform_extractors_enabled_generic_disabled(tmp_path):
     assert "instagram" in keys
     assert "tiktok" in keys
     assert "generic" not in keys
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://vt.tiktok.com/ZExample/",
+        "https://vm.tiktok.com/ZExample/",
+        "https://m.tiktok.com/t/ZExample/",
+        "https://tiktok.com/@creator/video/7663144858546277655",
+        "https://m.tiktok.com/@creator/video/7663144858546277655",
+    ],
+)
+def test_tiktok_links_match_an_enabled_extractor(url, tmp_path):
+    canonical = parse_link(url).url
+    with YoutubeDL(options(tmp_path, 48_000_000, 0, None)) as downloader:
+        assert any(extractor.suitable(canonical) for extractor in downloader._ies.values())
 
 
 def test_format_selection_accepts_unknown_sizes(tmp_path):
@@ -56,6 +73,7 @@ def test_format_selection_accepts_unknown_sizes(tmp_path):
         ("COFE_LIVE", "live"),
         ("Sign in to confirm you're not a bot", "restricted"),
         ("Private video", "restricted"),
+        ("Unable to download webpage: read timed out", "timeout"),
         ("unknown error with sensitive URL", "unavailable"),
     ],
 )

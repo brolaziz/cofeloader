@@ -68,4 +68,6 @@ def parse_link(text: str) -> VideoLink:
             raise LinkError("TikTok video havolasi noto'g'ri.")
     elif not (re.fullmatch(r"/@[^/]+/video/\d+", path) or re.fullmatch(r"/t/[A-Za-z0-9]+", path)):
         raise LinkError("TikTok profil emas, video havolasini yuboring.")
+    else:
+        host = "www.tiktok.com"
     return VideoLink(f"https://{host}{path}/", platform)

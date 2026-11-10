@@ -14,12 +14,11 @@ from cofesave.storage import CachedVideo
 LINK = parse_link("https://youtu.be/dQw4w9WgXcQ")
 
 
-async def test_one_pending_job_per_user(settings, storage, message):
+async def test_accepts_consecutive_jobs_from_same_user(settings, storage, message):
     manager = JobManager(settings, storage)
     await manager.enqueue(message, LINK)
     await manager.enqueue(message, LINK)
-    assert manager.queue.qsize() == 1
-    assert "Oldingi" in message.answer.call_args.args[0]
+    assert manager.queue.qsize() == 2
     await manager.stop()
 
 
@@ -42,16 +41,6 @@ async def test_status_failure_releases_reservation(settings, storage, message):
         await manager.enqueue(message, LINK)
     assert not manager.busy
     assert manager.queue.empty()
-
-
-async def test_cooldown(settings, storage, message):
-    manager = JobManager(settings, storage)
-    await manager.enqueue(message, LINK)
-    manager.busy.clear()  # Simulate completion before the cooldown expires.
-    await manager.enqueue(message, LINK)
-    assert manager.queue.qsize() == 1
-    assert "biroz kuting" in message.answer.call_args.args[0]
-    await manager.stop()
 
 
 async def test_cache_sends_without_downloading(settings, storage, message, monkeypatch):

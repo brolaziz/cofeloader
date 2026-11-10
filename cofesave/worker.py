@@ -61,7 +61,7 @@ def options(directory: Path, max_bytes: int, max_duration: int, cookies: str | N
         "cachedir": False,
         "cookiefile": cookies,
         "overwrites": False,
-        "allowed_extractors": ["youtube.*", "instagram.*", "tiktok.*"],
+        "allowed_extractors": ["youtube.*", "instagram.*", "tiktok.*", r"vm\.tiktok"],
         "js_runtimes": {"node": {}},
     }
 
@@ -74,6 +74,8 @@ def error_code(message: str) -> str:
         return "live"
     if "cofe_size" in lower or "larger than max" in lower:
         return "size"
+    if any(word in lower for word in ("timed out", "timeout")):
+        return "timeout"
     if any(word in lower for word in ("sign in", "login", "private", "cookies", "not a bot")):
         return "restricted"
     return "unavailable"
@@ -81,7 +83,14 @@ def error_code(message: str) -> str:
 
 def download(url: str, directory: Path, max_bytes: int, duration: int, cookies: str | None) -> dict:
     link = parse_link(url)
-    with YoutubeDL(options(directory, max_bytes, duration, cookies)) as downloader:
+    config = options(directory, max_bytes, duration, cookies)
+    if link.platform == "TikTok":
+        # Prefer a ready-to-send MP4, including vertical formats taller than 720 pixels.
+        combined = f"b[ext=mp4][filesize<=?{max_bytes}][filesize_approx<=?{max_bytes}]"
+        config["format"] = f"{combined}/{config['format']}"
+        config["socket_timeout"] = 10
+        config["extractor_retries"] = 0
+    with YoutubeDL(config) as downloader:
         info = downloader.extract_info(link.url, download=True)
     if not info:
         return {"error": "unavailable"}
@@ -92,7 +101,7 @@ def download(url: str, directory: Path, max_bytes: int, duration: int, cookies: 
         info = entries[0]
     files = list(directory.glob("*.mp4"))
     if len(files) != 1 or files[0].stat().st_size == 0:
-        reason = options(directory, max_bytes, duration, cookies)["match_filter"](info)
+        reason = config["match_filter"](info)
         return {"error": error_code(reason or "")}
     if files[0].stat().st_size > max_bytes:
         return {"error": "size"}
