@@ -11,13 +11,18 @@ from urllib.parse import urljoin
 from aiohttp import ClientError, ClientSession, ClientTimeout
 
 from cofesave.config import ROOT, Settings
+from cofesave.formats import DownloadFormat
 from cofesave.links import VideoLink, parse_link
 
 ERRORS = {
-    "size": "Video hajmi limitdan katta. Qisqaroq video yuboring.",
+    "size": "Fayl hajmi limitdan katta. Pastroq sifatni tanlang yoki qisqaroq video yuboring.",
     "duration": "Video davomiyligi limitdan uzun. Qisqaroq video yuboring.",
     "live": "Jonli efirni yuklab bo'lmaydi. Tayyor video havolasini yuboring.",
-    "restricted": "Platforma kirishni chekladi yoki video yopiq. Boshqa ochiq videoni sinang.",
+    "restricted": "Bu video yopiq yoki akkauntga kirishni talab qiladi.",
+    "platform_blocked": (
+        "Platforma botning so'rovini chekladi. Keyinroq qayta urinib ko'ring."
+    ),
+    "format": "Bu format mavjud emas. Boshqa sifatni yoki avtomatik videoni tanlang.",
     "unavailable": "Videoni olib bo'lmadi. Havolani tekshiring yoki keyinroq urinib ko'ring.",
     "timeout": "Yuklash juda uzoq davom etdi. Keyinroq yoki qisqaroq video bilan urinib ko'ring.",
 }
@@ -100,7 +105,9 @@ async def stop_process(process: asyncio.subprocess.Process) -> None:
     await process.wait()
 
 
-async def fetch(url: str, directory: Path, settings: Settings) -> DownloadedVideo:
+async def fetch(
+    url: str, directory: Path, settings: Settings, selection: DownloadFormat = DownloadFormat.AUTO
+) -> DownloadedVideo:
     command = [
         sys.executable,
         "-m",
@@ -109,6 +116,8 @@ async def fetch(url: str, directory: Path, settings: Settings) -> DownloadedVide
         str(directory),
         str(settings.max_bytes),
         str(settings.max_duration),
+        "--format",
+        selection.value,
     ]
     if settings.cookies_file:
         command.extend(["--cookies", str(settings.cookies_file)])

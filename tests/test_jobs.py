@@ -8,6 +8,7 @@ from aiogram.exceptions import TelegramBadRequest
 from aiogram.methods import SendVideo
 
 from cofesave.downloader import DownloadedVideo, DownloadFailure
+from cofesave.formats import DownloadFormat
 from cofesave.jobs import JobManager
 from cofesave.links import parse_link
 from cofesave.storage import CachedVideo
@@ -21,7 +22,7 @@ TIKTOK_FULL = parse_link("https://www.tiktok.com/@creator/video/7663144858546277
 async def test_tiktok_short_and_full_links_share_cache(
     short_first, settings, storage, message, monkeypatch
 ):
-    async def download(url, directory, config):
+    async def download(url, directory, config, selection):
         path = directory / "video.mp4"
         path.write_bytes(b"video")
         return DownloadedVideo(path, "TikTok", TIKTOK_FULL.tiktok_id)
@@ -65,7 +66,7 @@ async def test_tiktok_short_link_uses_legacy_full_url_cache(
 async def test_busy_download_returns_immediately(settings, storage, message, monkeypatch):
     started = asyncio.Event()
 
-    async def download(url, directory, config):
+    async def download(url, directory, config, selection):
         started.set()
         await asyncio.Event().wait()
 
@@ -99,7 +100,7 @@ async def test_cache_sends_without_downloading(settings, storage, message, monke
 async def test_download_saved_and_temp_cleaned(settings, storage, message, monkeypatch):
     directories = []
 
-    async def download(url, directory, config):
+    async def download(url, directory, config, selection):
         directories.append(directory)
         path = directory / "video.mp4"
         path.write_bytes(b"video")
@@ -115,7 +116,7 @@ async def test_download_saved_and_temp_cleaned(settings, storage, message, monke
 
 
 async def test_stale_file_id_downloads_again(settings, storage, message, monkeypatch):
-    async def download(url, directory, config):
+    async def download(url, directory, config, selection):
         path = directory / "video.mp4"
         path.write_bytes(b"video")
         return DownloadedVideo(path, "new")
@@ -138,7 +139,7 @@ async def test_failure_releases_download_slot_and_cleans_up(
 ):
     directories = []
 
-    async def failing_download(url, directory, config):
+    async def failing_download(url, directory, config, selection):
         directories.append(directory)
         (directory / "partial.mp4").write_bytes(b"partial")
         raise DownloadFailure("restricted")
@@ -159,7 +160,7 @@ async def test_consecutive_requests_start_without_waiting(settings, storage, mes
     release = asyncio.Event()
     started = 0
 
-    async def download(url, directory, config):
+    async def download(url, directory, config, selection):
         nonlocal started
         started += 1
         if started == 2:
@@ -187,3 +188,34 @@ async def test_consecutive_requests_start_without_waiting(settings, storage, mes
     finally:
         await manager.stop()
     assert storage.stats()[2:] == (2, 0)
+
+
+async def test_audio_and_video_qualities_use_separate_cache_entries(
+    settings, storage, message, monkeypatch
+):
+    async def download(url, directory, config, selection):
+        path = directory / f"video.{selection.extension}"
+        path.write_bytes(b"media")
+        return DownloadedVideo(path, "Test")
+
+    fetch = AsyncMock(side_effect=download)
+    monkeypatch.setattr("cofesave.jobs.fetch", fetch)
+    message.answer_audio = AsyncMock(
+        return_value=SimpleNamespace(audio=SimpleNamespace(file_id="audio-file"))
+    )
+    storage.save(LINK.url, CachedVideo("legacy-video", "Test"))
+    manager = JobManager(settings, storage)
+
+    await manager.handle(message, LINK, DownloadFormat.MP3)
+    assert message.answer_audio.call_args.args[0].filename == "cofesave.mp3"
+    await manager.handle(message, LINK, DownloadFormat.MP3)
+    assert message.answer_audio.call_args.args[0] == "audio-file"
+    await manager.handle(message, LINK, DownloadFormat.P360)
+    await manager.handle(message, LINK, DownloadFormat.P720)
+
+    assert [call.args[-1] for call in fetch.await_args_list] == [
+        DownloadFormat.MP3,
+        DownloadFormat.P360,
+        DownloadFormat.P720,
+    ]
+    assert storage.get(LINK.url).file_id == "legacy-video"

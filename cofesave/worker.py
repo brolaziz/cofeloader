@@ -7,6 +7,7 @@ from pathlib import Path
 from yt_dlp import YoutubeDL
 from yt_dlp.utils import DownloadError
 
+from cofesave.formats import DownloadFormat
 from cofesave.links import parse_link
 
 
@@ -76,21 +77,59 @@ def error_code(message: str) -> str:
         return "size"
     if any(word in lower for word in ("timed out", "timeout")):
         return "timeout"
-    if any(word in lower for word in ("sign in", "login", "private", "cookies", "not a bot")):
+    if "not a bot" in lower or "http error 429" in lower:
+        return "platform_blocked"
+    if any(word in lower for word in ("sign in", "login", "private", "cookies")):
         return "restricted"
+    if "requested format is not available" in lower:
+        return "format"
     return "unavailable"
 
 
-def download(url: str, directory: Path, max_bytes: int, duration: int, cookies: str | None) -> dict:
+def fits_resolution(media_format: dict, limit: int) -> bool:
+    if media_format.get("vcodec") == "none":
+        return True
+    dimensions = (media_format.get("height") or 0, media_format.get("width") or 0)
+    # For a vertical video the shorter dimension is its width.
+    return any(0 < dimension <= limit for dimension in dimensions)
+
+
+def download(
+    url: str,
+    directory: Path,
+    max_bytes: int,
+    duration: int,
+    cookies: str | None,
+    selection: DownloadFormat = DownloadFormat.AUTO,
+) -> dict:
     link = parse_link(url)
     config = options(directory, max_bytes, duration, cookies)
+    size = f"[filesize<=?{max_bytes}][filesize_approx<=?{max_bytes}]"
     if link.platform == "TikTok":
-        # Prefer a ready-to-send MP4, including vertical formats taller than 720 pixels.
-        combined = f"b[ext=mp4][filesize<=?{max_bytes}][filesize_approx<=?{max_bytes}]"
-        config["format"] = f"{combined}/{config['format']}"
         config["socket_timeout"] = 10
         config["extractor_retries"] = 0
+        if selection is DownloadFormat.AUTO:
+            config["format"] = f"b[ext=mp4]{size}/{config['format']}"
+    if selection is DownloadFormat.MP3:
+        config["format"] = f"ba{size}/b{size}"
+        config["postprocessors"] = [
+            {"key": "FFmpegExtractAudio", "preferredcodec": "mp3", "preferredquality": "128"}
+        ]
+    resolution = selection.resolution
+    if resolution is not None:
+        config["format"] = (
+            f"bv*[ext=mp4][vcodec^=avc1]{size}+ba[ext=m4a]{size}/b[ext=mp4]{size}"
+        )
+        config["format_sort"] = ["res"]
     with YoutubeDL(config) as downloader:
+        if resolution is not None:
+            selector = downloader.format_selector
+
+            def select_video(context):
+                formats = [fmt for fmt in context["formats"] if fits_resolution(fmt, resolution)]
+                return selector({**context, "formats": formats})
+
+            downloader.format_selector = select_video
         info = downloader.extract_info(link.url, download=True)
     if not info:
         return {"error": "unavailable"}
@@ -99,13 +138,13 @@ def download(url: str, directory: Path, max_bytes: int, duration: int, cookies: 
         if not entries:
             return {"error": "unavailable"}
         info = entries[0]
-    files = list(directory.glob("*.mp4"))
-    if len(files) != 1 or files[0].stat().st_size == 0:
+    path = directory / f"video.{selection.extension}"
+    if not path.is_file() or path.stat().st_size == 0:
         reason = config["match_filter"](info)
         return {"error": error_code(reason or "")}
-    if files[0].stat().st_size > max_bytes:
+    if path.stat().st_size > max_bytes:
         return {"error": "size"}
-    result = {"filename": files[0].name, "title": str(info.get("title") or "Video")[:180]}
+    result = {"filename": path.name, "title": str(info.get("title") or "Video")[:180]}
     if link.platform == "TikTok" and isinstance(info.get("id"), str):
         result["tiktok_id"] = info["id"]
     return result
@@ -118,9 +157,12 @@ def main() -> None:
     parser.add_argument("max_bytes", type=int)
     parser.add_argument("max_duration", type=int)
     parser.add_argument("--cookies")
+    parser.add_argument("--format", type=DownloadFormat, default=DownloadFormat.AUTO)
     args = parser.parse_args()
     try:
-        result = download(args.url, args.directory, args.max_bytes, args.max_duration, args.cookies)
+        result = download(
+            args.url, args.directory, args.max_bytes, args.max_duration, args.cookies, args.format
+        )
     except Exception as error:
         # Do not expose extractor errors, URLs, or cookie data to logs/users.
         result = {"error": error_code(str(error))}

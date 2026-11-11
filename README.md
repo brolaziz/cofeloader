@@ -74,8 +74,9 @@ Guruhda botga xabar va video yuborish ruxsati ham berilgan bo'lsin.
 ### Video cheklovlari
 
 Telegram'ning standart Bot API'si yangi video fayllarini 50 MB gacha qabul qiladi, shu sababli
-48 MB xavfsiz chegara saqlanadi. Video davomiyligi chegaralanmaydi. Bot katta videoni qayta
-kodlab siqmaydi; 48 MB dan katta natijani Telegram'ga yubora olmaydi.
+48 MB xavfsiz chegara saqlanadi. Havola yuborgach MP3, 360p, 720p, 1080p yoki Avtomatik
+variantini tanlang. Raqamli sifat tanlanganda bot manba va hajmga qarab pastroq
+sifatdagi MP4 yuborishi mumkin. Bot katta videoni qayta kodlab siqmaydi.
 
 Yopiq kontent, jonli efir, pleylist, Stories va foto albomlar qo'llanmaydi. Instagram karuselida
 faqat birinchi element tekshiriladi; u video bo'lmasa yuklash rad etiladi. Instagram / YouTube /
@@ -89,6 +90,23 @@ yo'lini ko'rsating. Cookie faylini Git'ga qo'shmang. Shu fayl bilan downloader i
 Format tanlash, extractor va platforma o'zgarishlari uchun yt-dlp yangilanib turishi kerak.
 Qulflangan paketlarni yangilash: `uv pip compile requirements.txt -o requirements.lock`,
 keyin tekshiruvlarni qayta bajarish va qayta build qilish.
+
+### 2 GB gacha fayllar
+
+1. [Telegram Bot API serverini](https://github.com/tdlib/telegram-bot-api#usage) alohida xizmat
+   sifatida `--local` rejimida ishga tushiring. Shu xizmatga `TELEGRAM_API_ID` va
+   `TELEGRAM_API_HASH` kerak.
+2. CofeSave sozlamalarida `TELEGRAM_LOCAL_API_URL` ga o'zingiz boshqaradigan API server
+   manzilini va `MAX_FILE_MB=2000` ni yozing. Bir kompyuterda manzil
+     `http://127.0.0.1:8081` bo'lishi mumkin. Alohida xizmatlar orasida ichki tarmoqdan foydalaning.
+3. Ishlab turgan botni ko'chirishda avval eski polling jarayonini to'xtating. Cloud API'da
+   [`logOut`](https://core.telegram.org/bots/api#logout) ni bir marta chaqiring va CofeSave'ni
+   yangi sozlamalar bilan ishga tushiring. Cloud API'ga qaytishdan oldin 10 daqiqa kutish kerak.
+
+48 MB dan yuqori limit tanlansa, yuklab olish va Telegram'ga yuborish uchun standart vaqt
+1800 soniyadan. `DOWNLOAD_TIMEOUT_SECONDS` va `UPLOAD_TIMEOUT_SECONDS` orqali sozlash mumkin.
+Audio va video oqimlarini birlashtirish uchun yakuniy fayldan tashqari vaqtinchalik disk joyi
+kerak bo'ladi. Disk cheklangan bo'lsa, `WORKERS=1` va kichikroq hajm chegarasini qo'llang.
 
 ## Tekshiruvlar
 

@@ -3,10 +3,11 @@ from unittest.mock import AsyncMock
 
 import pytest
 from aiogram import Bot, Dispatcher
-from aiogram.methods import SendMessage, SendPhoto
-from aiogram.types import Chat, Message, Update, User
+from aiogram.methods import AnswerCallbackQuery, SendMessage, SendPhoto
+from aiogram.types import CallbackQuery, Chat, Message, Update, User
 
 from cofesave.app import router_for
+from cofesave.formats import DownloadFormat
 from cofesave.jobs import JobManager
 
 
@@ -71,8 +72,8 @@ async def test_non_admin_cannot_read_stats(settings, storage, message):
     assert "faqat administrator" in message.answer.call_args.args[0]
 
 
-@pytest.mark.parametrize("chat_type", ["group", "supergroup"])
-async def test_group_video_link_is_handled(chat_type, settings, storage):
+@pytest.mark.parametrize("chat_type", ["private", "group", "supergroup"])
+async def test_video_link_offers_formats_and_routes_selection(chat_type, settings, storage):
     bot = Bot("123456:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi")
     bot.session.make_request = AsyncMock()
     jobs = JobManager(settings, storage)
@@ -90,11 +91,32 @@ async def test_group_video_link_is_handled(chat_type, settings, storage):
     )
     try:
         await dispatcher.feed_update(bot, Update(update_id=10, message=message))
+        jobs.handle.assert_not_awaited()
+        sent = bot.session.make_request.call_args.args[1]
+        assert sent.reply_parameters.message_id == message.message_id
+        buttons = {
+            button.text: button for row in sent.reply_markup.inline_keyboard for button in row
+        }
+        assert set(buttons) == {"Audio (MP3)", "360p", "720p", "1080p", "Avtomatik"}
+        menu = message.model_copy(update={"message_id": 11, "reply_to_message": message})
+        callback = CallbackQuery(
+            id="choice",
+            from_user=User(id=2, is_bot=False, first_name="Someone else"),
+            chat_instance="test",
+            message=menu,
+            data=buttons["Audio (MP3)"].callback_data,
+        )
+        await dispatcher.feed_update(bot, Update(update_id=11, callback_query=callback))
+        jobs.handle.assert_not_awaited()
+        assert isinstance(bot.session.make_request.call_args.args[1], AnswerCallbackQuery)
+        callback = callback.model_copy(update={"from_user": message.from_user})
+        await dispatcher.feed_update(bot, Update(update_id=12, callback_query=callback))
         jobs.handle.assert_awaited_once()
-        received, link = jobs.handle.call_args.args
+        received, link, selection = jobs.handle.call_args.args
         assert received.chat.id == -100123
         assert received.message_thread_id == message.message_thread_id
         assert link.platform == "YouTube"
+        assert selection is DownloadFormat.MP3
     finally:
         await bot.session.close()
 
