@@ -6,7 +6,7 @@ Python 3.12+, aiogram 3, yt-dlp, FFmpeg va Node.js 22 ishlatiladi.
 ## Imkoniyatlar
 
 - O'zbekcha `/start` (welcome rasm bilan), `/help`, administrator uchun `/stats`.
-- Ochiq videolarni MP4 formatida, imkon bo'lsa 720p gacha yuborish.
+- YouTube uchun format tanlash, Instagram va TikTok uchun avtomatik yuklash.
 - Davomiylik chegarasi yo'q. Yuklash darhol boshlanadi; `WORKERS` joylari band bo'lsa,
   bot darhol xabar beradi. Keshdagi videolar yuklash joyini band qilmaydi.
 - Bir foydalanuvchi ketma-ket bir nechta video havola yubora oladi.
@@ -74,9 +74,14 @@ Guruhda botga xabar va video yuborish ruxsati ham berilgan bo'lsin.
 ### Video cheklovlari
 
 Telegram'ning standart Bot API'si yangi video fayllarini 50 MB gacha qabul qiladi, shu sababli
-48 MB xavfsiz chegara saqlanadi. Havola yuborgach MP3, 360p, 720p, 1080p yoki Avtomatik
+48 MB xavfsiz chegara saqlanadi. YouTube uchun MP3, 360p, 720p, 1080p yoki Avtomatik
 variantini tanlang. Raqamli sifat tanlanganda bot manba va hajmga qarab pastroq
-sifatdagi MP4 yuborishi mumkin. Bot katta videoni qayta kodlab siqmaydi.
+sifatdagi MP4 yuborishi mumkin. Instagram va TikTok uchun eng sifatli mavjud oqimlar
+avtomatik yuklanadi va qayta kodlanmaydi. MP4 video sifatida, boshqa formatlar esa
+fayl sifatida yuboriladi. Eng sifatli nusxa hajm chegarasidan oshsa, bot xabar beradi.
+
+Media yuborilgach, bot shu so'rovning format menyusi va havolasini o'chiradi.
+Guruhda foydalanuvchi havolasini o'chirish uchun botga xabarlarni o'chirish huquqi kerak.
 
 Yopiq kontent, jonli efir, pleylist, Stories va foto albomlar qo'llanmaydi. Instagram karuselida
 faqat birinchi element tekshiriladi; u video bo'lmasa yuklash rad etiladi. Instagram / YouTube /

@@ -16,5 +16,8 @@ class DownloadFormat(StrEnum):
     def resolution(self) -> int | None:
         return int(self) if self.isdecimal() else None
 
-    def cache_key(self, key: str) -> str:
+    def cache_key(self, key: str, platform: str) -> str:
+        if self is self.AUTO and platform != "YouTube":
+            # Cached copies from before native downloads can have lower quality.
+            return f"original:{key}"
         return key if self is self.AUTO else f"{self}:{key}"

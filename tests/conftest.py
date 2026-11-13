@@ -38,4 +38,5 @@ def message():
         from_user=SimpleNamespace(id=1),
         answer=AsyncMock(return_value=status),
         answer_video=AsyncMock(return_value=sent),
+        delete=AsyncMock(),
     )

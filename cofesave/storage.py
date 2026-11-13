@@ -7,6 +7,7 @@ from pathlib import Path
 class CachedVideo:
     file_id: str
     title: str
+    is_document: bool = False
 
 
 class Storage:
@@ -22,7 +23,8 @@ class Storage:
             );
             CREATE TABLE IF NOT EXISTS videos (
                 bot_id INTEGER NOT NULL, url TEXT NOT NULL, file_id TEXT NOT NULL,
-                title TEXT NOT NULL, PRIMARY KEY (bot_id, url)
+                title TEXT NOT NULL, is_document INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (bot_id, url)
             );
             CREATE TABLE IF NOT EXISTS deliveries (
                 bot_id INTEGER NOT NULL, cached INTEGER NOT NULL,
@@ -33,6 +35,13 @@ class Storage:
                 PRIMARY KEY (bot_id, url)
             );
         """)
+        with self.db:
+            self.db.execute("BEGIN IMMEDIATE")
+            columns = {column[1] for column in self.db.execute("PRAGMA table_info(videos)")}
+            if "is_document" not in columns:
+                self.db.execute(
+                    "ALTER TABLE videos ADD COLUMN is_document INTEGER NOT NULL DEFAULT 0"
+                )
 
     def add_user(self, user_id: int) -> None:
         with self.db:
@@ -40,9 +49,10 @@ class Storage:
 
     def get(self, url: str) -> CachedVideo | None:
         row = self.db.execute(
-            "SELECT file_id, title FROM videos WHERE bot_id=? AND url=?", (self.bot_id, url)
+            "SELECT file_id, title, is_document FROM videos WHERE bot_id=? AND url=?",
+            (self.bot_id, url),
         ).fetchone()
-        return CachedVideo(*row) if row else None
+        return CachedVideo(row[0], row[1], bool(row[2])) if row else None
 
     def alias_for(self, url: str) -> str | None:
         row = self.db.execute(
@@ -60,8 +70,9 @@ class Storage:
     def save(self, url: str, video: CachedVideo) -> None:
         with self.db:
             self.db.execute(
-                "INSERT OR REPLACE INTO videos VALUES (?, ?, ?, ?)",
-                (self.bot_id, url, video.file_id, video.title),
+                "INSERT OR REPLACE INTO videos (bot_id, url, file_id, title, is_document) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (self.bot_id, url, video.file_id, video.title, video.is_document),
             )
 
     def discard(self, url: str) -> None:

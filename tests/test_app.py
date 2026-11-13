@@ -113,10 +113,41 @@ async def test_video_link_offers_formats_and_routes_selection(chat_type, setting
         await dispatcher.feed_update(bot, Update(update_id=12, callback_query=callback))
         jobs.handle.assert_awaited_once()
         received, link, selection = jobs.handle.call_args.args
+        assert jobs.handle.call_args.kwargs["menu"].message_id == menu.message_id
         assert received.chat.id == -100123
         assert received.message_thread_id == message.message_thread_id
         assert link.platform == "YouTube"
         assert selection is DownloadFormat.MP3
+    finally:
+        await bot.session.close()
+
+
+@pytest.mark.parametrize(
+    "url,platform",
+    [
+        ("https://www.instagram.com/reel/Example/", "Instagram"),
+        ("https://vt.tiktok.com/ZExample/", "TikTok"),
+    ],
+)
+async def test_other_platforms_start_without_a_format_menu(url, platform, settings, storage):
+    bot = Bot("123456:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi")
+    bot.session.make_request = AsyncMock()
+    jobs = JobManager(settings, storage)
+    jobs.handle = AsyncMock()
+    dispatcher = Dispatcher()
+    dispatcher.include_router(router_for(settings, storage, jobs))
+    message = Message(
+        message_id=10,
+        date=datetime.now(UTC),
+        chat=Chat(id=1, type="private"),
+        from_user=User(id=1, is_bot=False, first_name="Tester"),
+        text=url,
+    )
+    try:
+        await dispatcher.feed_update(bot, Update(update_id=10, message=message))
+        bot.session.make_request.assert_not_awaited()
+        jobs.handle.assert_awaited_once()
+        assert jobs.handle.call_args.args[1].platform == platform
     finally:
         await bot.session.close()
 

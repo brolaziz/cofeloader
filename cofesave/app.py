@@ -43,7 +43,7 @@ FORMAT_KEYBOARD = InlineKeyboardMarkup(
 def router_for(settings: Settings, storage: Storage, jobs: JobManager) -> Router:
     router = Router()
     router.message.filter(F.chat.type.in_({ChatType.PRIVATE, ChatType.GROUP, ChatType.SUPERGROUP}))
-    active_choices: set[tuple[int, int, DownloadFormat]] = set()
+    active_choices: set[tuple[int, int]] = set()
 
     @router.message(CommandStart())
     async def start(message: Message) -> None:
@@ -64,7 +64,8 @@ def router_for(settings: Settings, storage: Storage, jobs: JobManager) -> Router
             "Videoning 'Ulashish / Share' tugmasidan havolasini nusxalab, shu yerga yuboring.\n\n"
             "• YouTube videolari va Shorts\n• Instagram Reels va video postlar\n"
             "• TikTok videolari\n\n"
-            "Havolani yuborgach, MP3 audio yoki video sifatini tanlang.\n"
+            "YouTube uchun MP3 audio yoki video sifatini tanlang. "
+            "Instagram va TikTok videolari avtomatik, eng yaxshi mavjud sifatda yuklanadi.\n"
             f"Har safar bitta havola. Maksimal hajm: {settings.max_bytes // 1_000_000} MB. "
             f"Davomiylik: {settings.max_duration // 60} daqiqagacha.\n"
             "Yopiq videolar, jonli efirlar, pleylistlar va foto albomlar qo'llab-quvvatlanmaydi. "
@@ -86,13 +87,16 @@ def router_for(settings: Settings, storage: Storage, jobs: JobManager) -> Router
     @router.message(F.text)
     async def video_link(message: Message) -> None:
         try:
-            parse_link(message.text or "")
+            link = parse_link(message.text or "")
         except LinkError as error:
             if message.chat.type == ChatType.PRIVATE:
                 await message.answer(str(error))
             return
         if message.from_user:
             storage.add_user(message.from_user.id)
+        if link.platform != "YouTube":
+            await jobs.handle(message, link)
+            return
         await message.reply(
             "Yuklash formatini tanlang. Manba va hajmga qarab pastroq sifat yuborilishi mumkin.",
             reply_markup=FORMAT_KEYBOARD,
@@ -101,7 +105,10 @@ def router_for(settings: Settings, storage: Storage, jobs: JobManager) -> Router
     @router.callback_query(F.data.startswith(FORMAT_PREFIX))
     async def download_choice(query: CallbackQuery) -> None:
         menu = query.message
-        source = menu.reply_to_message if isinstance(menu, Message) else None
+        if not isinstance(menu, Message):
+            await query.answer("Havolani qayta yuboring.", show_alert=True)
+            return
+        source = menu.reply_to_message
         if source is None or source.from_user is None:
             await query.answer("Havolani qayta yuboring.", show_alert=True)
             return
@@ -114,14 +121,17 @@ def router_for(settings: Settings, storage: Storage, jobs: JobManager) -> Router
         except ValueError:
             await query.answer("Havolani qayta yuboring.", show_alert=True)
             return
-        key = (source.chat.id, source.message_id, selection)
+        if link.platform != "YouTube":
+            await query.answer("Havolani qayta yuboring.", show_alert=True)
+            return
+        key = (source.chat.id, source.message_id)
         if key in active_choices:
-            await query.answer("Bu format yuklanmoqda.")
+            await query.answer("Bu video yuklanmoqda.")
             return
         active_choices.add(key)
         try:
             await query.answer("Yuklanmoqda…")
-            await jobs.handle(source, link, selection)
+            await jobs.handle(source, link, selection, menu=menu)
         finally:
             active_choices.discard(key)
 

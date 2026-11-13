@@ -105,11 +105,17 @@ def download(
     link = parse_link(url)
     config = options(directory, max_bytes, duration, cookies)
     size = f"[filesize<=?{max_bytes}][filesize_approx<=?{max_bytes}]"
+    original = link.platform != "YouTube" and selection is DownloadFormat.AUTO
+    if original:
+        # TikTok can advertise ByteVC2 streams that cannot be played by standard clients.
+        video = "bv*[vcodec!=?bytevc2]"
+        config["format"] = f"{video}+ba/{video}"
+        config["format_sort"] = ["res", "fps", "quality", "br"]
+        config["format_sort_force"] = True
+        config.pop("merge_output_format")
     if link.platform == "TikTok":
         config["socket_timeout"] = 10
         config["extractor_retries"] = 0
-        if selection is DownloadFormat.AUTO:
-            config["format"] = f"b[ext=mp4]{size}/{config['format']}"
     if selection is DownloadFormat.MP3:
         config["format"] = f"ba{size}/b{size}"
         config["postprocessors"] = [
@@ -117,9 +123,7 @@ def download(
         ]
     resolution = selection.resolution
     if resolution is not None:
-        config["format"] = (
-            f"bv*[ext=mp4][vcodec^=avc1]{size}+ba[ext=m4a]{size}/b[ext=mp4]{size}"
-        )
+        config["format"] = f"bv*[ext=mp4][vcodec^=avc1]{size}+ba[ext=m4a]{size}/b[ext=mp4]{size}"
         config["format_sort"] = ["res"]
     with YoutubeDL(config) as downloader:
         if resolution is not None:
@@ -138,7 +142,8 @@ def download(
         if not entries:
             return {"error": "unavailable"}
         info = entries[0]
-    path = directory / f"video.{selection.extension}"
+    extension = info.get("ext") if original else selection.extension
+    path = directory / f"video.{extension}"
     if not path.is_file() or path.stat().st_size == 0:
         reason = config["match_filter"](info)
         return {"error": error_code(reason or "")}

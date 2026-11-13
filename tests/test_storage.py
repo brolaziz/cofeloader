@@ -1,3 +1,5 @@
+import sqlite3
+
 from cofesave.storage import CachedVideo, Storage
 
 
@@ -20,3 +22,23 @@ def test_persistent_cache_and_bot_isolation(tmp_path):
     assert reopened.get("url") is None
     reopened.close()
     second.close()
+
+
+def test_migrates_existing_cache_and_persists_document_type(tmp_path):
+    path = tmp_path / "db.sqlite3"
+    with sqlite3.connect(path) as db:
+        db.execute(
+            "CREATE TABLE videos (bot_id INTEGER NOT NULL, url TEXT NOT NULL, "
+            "file_id TEXT NOT NULL, title TEXT NOT NULL, PRIMARY KEY (bot_id, url))"
+        )
+        db.execute("INSERT INTO videos VALUES (1, 'old', 'video-id', 'old title')")
+    db.close()
+
+    storage = Storage(path, 1)
+    assert storage.get("old") == CachedVideo("video-id", "old title")
+    storage.save("new", CachedVideo("doc-id", "new title", is_document=True))
+    storage.close()
+
+    reopened = Storage(path, 1)
+    assert reopened.get("new") == CachedVideo("doc-id", "new title", is_document=True)
+    reopened.close()

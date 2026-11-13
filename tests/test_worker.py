@@ -3,7 +3,7 @@ from yt_dlp import YoutubeDL
 from yt_dlp.utils import DownloadError
 
 from cofesave.links import parse_link
-from cofesave.worker import error_code, options
+from cofesave.worker import download, error_code, options
 
 
 def test_live_duration_and_size_guards(tmp_path):
@@ -63,6 +63,72 @@ def test_format_selection_accepts_unknown_sizes(tmp_path):
             download=False,
         )
     assert result["format_id"] == "mp4"
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://www.instagram.com/reel/Example/",
+        "https://www.tiktok.com/@creator/video/7663144858546277655",
+    ],
+)
+@pytest.mark.parametrize("max_bytes", [100, 50])
+def test_native_download_chooses_highest_quality_and_keeps_extension(
+    url, max_bytes, tmp_path, monkeypatch
+):
+    def extract_info(self, url, *, download):
+        assert "merge_output_format" not in self.params
+        result = self.process_ie_result(
+            {
+                "id": "123",
+                "title": "Example",
+                "webpage_url": url,
+                "formats": [
+                    {
+                        "format_id": "mp4",
+                        "url": "https://example.com/low.mp4",
+                        "ext": "mp4",
+                        "vcodec": "avc1",
+                        "acodec": "aac",
+                        "height": 720,
+                        "width": 1280,
+                        "filesize": 40,
+                        "preference": 2,
+                    },
+                    {
+                        "format_id": "webm",
+                        "url": "https://example.com/high.webm",
+                        "ext": "webm",
+                        "vcodec": "vp9",
+                        "acodec": "opus",
+                        "height": 2160,
+                        "width": 3840,
+                        "filesize": 80,
+                    },
+                    {
+                        "format_id": "bytevc2",
+                        "url": "https://example.com/unplayable.mp4",
+                        "ext": "mp4",
+                        "vcodec": "bytevc2",
+                        "acodec": "aac",
+                        "height": 4320,
+                        "width": 7680,
+                    },
+                ],
+            },
+            download=False,
+        )
+        assert result["format_id"] == "webm"
+        if result["filesize"] <= max_bytes:
+            (tmp_path / f"video.{result['ext']}").write_bytes(b"original")
+        return result
+
+    monkeypatch.setattr(YoutubeDL, "extract_info", extract_info)
+    result = download(url, tmp_path, max_bytes, 1200, None)
+    if max_bytes == 50:
+        assert result == {"error": "size"}
+    else:
+        assert result["filename"] == "video.webm"
 
 
 @pytest.mark.parametrize(

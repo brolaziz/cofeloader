@@ -1,11 +1,11 @@
 import asyncio
 from dataclasses import replace
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock, call
 
 import pytest
 from aiogram.exceptions import TelegramBadRequest
-from aiogram.methods import SendVideo
+from aiogram.methods import DeleteMessage, SendVideo
 
 from cofesave.downloader import DownloadedVideo, DownloadFailure
 from cofesave.formats import DownloadFormat
@@ -42,13 +42,15 @@ async def test_tiktok_short_and_full_links_share_cache(
     fetch.assert_awaited_once()
     resolve.assert_awaited_once_with(TIKTOK_SHORT)
     assert message.answer_video.call_args.args[0] == "telegram-file-123"
+    assert message.delete.await_count == 3
     assert storage.stats()[1:] == (1, 3, 2)
 
 
-async def test_tiktok_short_link_uses_legacy_full_url_cache(
+async def test_tiktok_short_link_uses_full_url_cache_for_native_quality(
     settings, storage, message, monkeypatch
 ):
-    storage.save(TIKTOK_FULL.url, CachedVideo("old-file", "TikTok"))
+    key = DownloadFormat.AUTO.cache_key(TIKTOK_FULL.url, "TikTok")
+    storage.save(key, CachedVideo("native-file", "TikTok"))
     download = AsyncMock()
     resolve = AsyncMock(return_value=TIKTOK_FULL)
     monkeypatch.setattr("cofesave.jobs.fetch", download)
@@ -60,7 +62,56 @@ async def test_tiktok_short_link_uses_legacy_full_url_cache(
 
     download.assert_not_awaited()
     resolve.assert_awaited_once()
-    assert message.answer_video.call_args.args[0] == "old-file"
+    assert message.answer_video.call_args.args[0] == "native-file"
+
+
+async def test_native_download_bypasses_legacy_cache_and_preserves_document(
+    settings, storage, message, monkeypatch
+):
+    link = parse_link("https://www.instagram.com/reel/Example/")
+    storage.save(link.url, CachedVideo("old-mp4", "Instagram"))
+
+    async def download(url, directory, config, selection):
+        path = directory / "video.webm"
+        path.write_bytes(b"original")
+        return DownloadedVideo(path, "Instagram")
+
+    fetch = AsyncMock(side_effect=download)
+    monkeypatch.setattr("cofesave.jobs.fetch", fetch)
+    message.answer_document = AsyncMock(
+        return_value=SimpleNamespace(document=SimpleNamespace(file_id="native-webm"))
+    )
+    manager = JobManager(settings, storage)
+
+    await manager.handle(message, link)
+    assert message.answer_document.call_args.args[0].filename == "cofesave.webm"
+    await manager.handle(message, link)
+    assert message.answer_document.call_args.args[0] == "native-webm"
+    message.answer_video.assert_not_awaited()
+    fetch.assert_awaited_once()
+
+
+async def test_cleans_request_messages_after_delivery_even_without_group_permission(
+    settings, storage, message
+):
+    storage.save(LINK.url, CachedVideo("file-123", "Some title"))
+    request = Mock()
+    menu = SimpleNamespace(delete=AsyncMock())
+    request.attach_mock(menu.delete, "delete_menu")
+    request.attach_mock(message.delete, "delete_link")
+    request.attach_mock(message.answer_video, "send_video")
+    message.delete.side_effect = TelegramBadRequest(
+        method=DeleteMessage(chat_id=1, message_id=1), message="message can't be deleted"
+    )
+
+    await JobManager(settings, storage).handle(message, LINK, menu=menu)
+
+    assert request.mock_calls == [
+        call.send_video("file-123", caption="Some title\n\nYouTube • @cofesavebot"),
+        call.delete_menu(),
+        call.delete_link(),
+    ]
+    message.answer.assert_not_awaited()
 
 
 async def test_busy_download_returns_immediately(settings, storage, message, monkeypatch):
@@ -150,6 +201,7 @@ async def test_failure_releases_download_slot_and_cleans_up(
     assert manager.active_downloads == 0
     assert not manager.tasks
     message.answer.assert_awaited_once()
+    message.delete.assert_not_awaited()
     assert all(not directory.exists() for directory in directories)
     assert storage.stats()[2] == 0
     await manager.stop()
@@ -174,6 +226,7 @@ async def test_consecutive_requests_start_without_waiting(settings, storage, mes
     other = SimpleNamespace(
         from_user=message.from_user,
         answer=AsyncMock(),
+        delete=AsyncMock(),
         answer_video=AsyncMock(
             return_value=SimpleNamespace(video=SimpleNamespace(file_id="cached"))
         ),
