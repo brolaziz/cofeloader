@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, Mock, call
 
 import pytest
 from aiogram.exceptions import TelegramBadRequest
-from aiogram.methods import DeleteMessage, SendVideo
+from aiogram.methods import SendVideo
 
 from cofesave.downloader import DownloadedVideo, DownloadFailure
 from cofesave.formats import DownloadFormat
@@ -42,7 +42,7 @@ async def test_tiktok_short_and_full_links_share_cache(
     fetch.assert_awaited_once()
     resolve.assert_awaited_once_with(TIKTOK_SHORT)
     assert message.answer_video.call_args.args[0] == "telegram-file-123"
-    assert message.delete.await_count == 3
+    message.delete.assert_not_awaited()
     assert storage.stats()[1:] == (1, 3, 2)
 
 
@@ -91,26 +91,20 @@ async def test_native_download_bypasses_legacy_cache_and_preserves_document(
     fetch.assert_awaited_once()
 
 
-async def test_cleans_request_messages_after_delivery_even_without_group_permission(
-    settings, storage, message
-):
+async def test_deletes_only_bot_menu_after_delivery(settings, storage, message):
     storage.save(LINK.url, CachedVideo("file-123", "Some title"))
     request = Mock()
     menu = SimpleNamespace(delete=AsyncMock())
     request.attach_mock(menu.delete, "delete_menu")
-    request.attach_mock(message.delete, "delete_link")
     request.attach_mock(message.answer_video, "send_video")
-    message.delete.side_effect = TelegramBadRequest(
-        method=DeleteMessage(chat_id=1, message_id=1), message="message can't be deleted"
-    )
 
     await JobManager(settings, storage).handle(message, LINK, menu=menu)
 
     assert request.mock_calls == [
         call.send_video("file-123", caption="Some title\n\nYouTube • @cofesavebot"),
         call.delete_menu(),
-        call.delete_link(),
     ]
+    message.delete.assert_not_awaited()
     message.answer.assert_not_awaited()
 
 

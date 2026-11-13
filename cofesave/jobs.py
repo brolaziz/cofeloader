@@ -45,12 +45,10 @@ class JobManager:
         assert task is not None
         self.tasks.add(task)
         try:
-            if await self.deliver(message, link, selection):
-                if menu is not None:
-                    with suppress(TelegramAPIError):
-                        await menu.delete()
+            delivered = await self.deliver(message, link, selection)
+            if delivered and menu is not None:
                 with suppress(TelegramAPIError):
-                    await message.delete()
+                    await menu.delete()
         except DownloadFailure as error:
             logger.info("%s download failed: %s", link.platform, error.code)
             description = str(error)

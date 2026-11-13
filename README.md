@@ -80,8 +80,7 @@ sifatdagi MP4 yuborishi mumkin. Instagram va TikTok uchun eng sifatli mavjud oqi
 avtomatik yuklanadi va qayta kodlanmaydi. MP4 video sifatida, boshqa formatlar esa
 fayl sifatida yuboriladi. Eng sifatli nusxa hajm chegarasidan oshsa, bot xabar beradi.
 
-Media yuborilgach, bot shu so'rovning format menyusi va havolasini o'chiradi.
-Guruhda foydalanuvchi havolasini o'chirish uchun botga xabarlarni o'chirish huquqi kerak.
+Media yuborilgach, bot shu so'rovga o'zi jo'natgan format menyusini o'chiradi.
 
 Yopiq kontent, jonli efir, pleylist, Stories va foto albomlar qo'llanmaydi. Instagram karuselida
 faqat birinchi element tekshiriladi; u video bo'lmasa yuklash rad etiladi. Instagram / YouTube /
