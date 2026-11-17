@@ -7,13 +7,14 @@ import pytest
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.methods import SendVideo
 
-from cofesave.downloader import DownloadedVideo, DownloadFailure
+from cofesave.downloader import DownloadedVideo, DownloadFailure, read_result
 from cofesave.formats import DownloadFormat
 from cofesave.jobs import JobManager
 from cofesave.links import parse_link
 from cofesave.storage import CachedVideo
 
 LINK = parse_link("https://youtu.be/dQw4w9WgXcQ")
+VIDEO_CACHE_KEY = DownloadFormat.AUTO.cache_key(LINK.url, LINK.platform)
 TIKTOK_SHORT = parse_link("https://vt.tiktok.com/ZExample/")
 TIKTOK_FULL = parse_link("https://www.tiktok.com/@creator/video/7663144858546277655")
 
@@ -92,7 +93,7 @@ async def test_native_download_bypasses_legacy_cache_and_preserves_document(
 
 
 async def test_deletes_only_bot_menu_after_delivery(settings, storage, message):
-    storage.save(LINK.url, CachedVideo("file-123", "Some title"))
+    storage.save(VIDEO_CACHE_KEY, CachedVideo("file-123", "Some title"))
     request = Mock()
     menu = SimpleNamespace(delete=AsyncMock())
     request.attach_mock(menu.delete, "delete_menu")
@@ -132,7 +133,7 @@ async def test_busy_download_returns_immediately(settings, storage, message, mon
 async def test_cache_sends_without_downloading(settings, storage, message, monkeypatch):
     download = AsyncMock()
     monkeypatch.setattr("cofesave.jobs.fetch", download)
-    storage.save(LINK.url, CachedVideo("file-123", "Some title"))
+    storage.save(VIDEO_CACHE_KEY, CachedVideo("file-123", "Some title"))
     manager = JobManager(settings, storage)
     manager.active_downloads = settings.workers
     await manager.handle(message, LINK)
@@ -155,7 +156,7 @@ async def test_download_saved_and_temp_cleaned(settings, storage, message, monke
     manager = JobManager(settings, storage)
     await manager.handle(message, LINK)
     message.answer.assert_not_awaited()
-    assert storage.get(LINK.url).file_id == "telegram-file-123"
+    assert storage.get(VIDEO_CACHE_KEY).file_id == "telegram-file-123"
     assert storage.stats()[2:] == (1, 0)
     assert all(not directory.exists() for directory in directories)
 
@@ -167,7 +168,7 @@ async def test_stale_file_id_downloads_again(settings, storage, message, monkeyp
         return DownloadedVideo(path, "new")
 
     monkeypatch.setattr("cofesave.jobs.fetch", download)
-    storage.save(LINK.url, CachedVideo("old", "old"))
+    storage.save(VIDEO_CACHE_KEY, CachedVideo("old", "old"))
     message.answer_video.side_effect = [
         TelegramBadRequest(
             method=SendVideo(chat_id=1, video="old"), message="wrong file identifier"
@@ -176,7 +177,7 @@ async def test_stale_file_id_downloads_again(settings, storage, message, monkeyp
     ]
     manager = JobManager(settings, storage)
     await manager.handle(message, LINK)
-    assert storage.get(LINK.url).file_id == "new"
+    assert storage.get(VIDEO_CACHE_KEY).file_id == "new"
 
 
 async def test_failure_releases_download_slot_and_cleans_up(
@@ -266,3 +267,31 @@ async def test_audio_and_video_qualities_use_separate_cache_entries(
         DownloadFormat.P720,
     ]
     assert storage.get(LINK.url).file_id == "legacy-video"
+
+
+async def test_portrait_upload_uses_dimensions_and_replaces_legacy_cache(
+    settings, storage, message, monkeypatch
+):
+    storage.save(LINK.url, CachedVideo("old-square-video", "Video"))
+
+    async def download(url, directory, config, selection):
+        path = directory / "video.mp4"
+        path.write_bytes(b"video")
+        (directory / "result.json").write_text(
+            '{"filename": "video.mp4", "title": "Portrait", "width": 720, "height": 1280}',
+            encoding="utf-8",
+        )
+        return read_result(directory, config.max_bytes)
+
+    fetch = AsyncMock(side_effect=download)
+    monkeypatch.setattr("cofesave.jobs.fetch", fetch)
+    manager = JobManager(settings, storage)
+
+    await manager.handle(message, LINK)
+    upload = message.answer_video.call_args
+    assert upload.args[0].filename == "cofesave.mp4"
+    assert (upload.kwargs["width"], upload.kwargs["height"]) == (720, 1280)
+
+    await manager.handle(message, LINK)
+    fetch.assert_awaited_once()
+    assert message.answer_video.call_args.args[0] == "telegram-file-123"

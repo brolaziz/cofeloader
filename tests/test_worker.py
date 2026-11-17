@@ -2,6 +2,7 @@ import pytest
 from yt_dlp import YoutubeDL
 from yt_dlp.utils import DownloadError
 
+from cofesave.formats import DownloadFormat
 from cofesave.links import parse_link
 from cofesave.worker import download, error_code, options
 
@@ -147,3 +148,86 @@ def test_native_download_chooses_highest_quality_and_keeps_extension(
 )
 def test_safe_error_mapping(text, code):
     assert error_code(text) == code
+
+
+@pytest.mark.parametrize(
+    "url,selection,dimensions,expected",
+    [
+        (
+            "https://youtu.be/Example1234",
+            DownloadFormat.AUTO,
+            [(720, 720), (720, 1280)],
+            "720x1280",
+        ),
+        (
+            "https://youtu.be/Example1234",
+            DownloadFormat.P1080,
+            [(1080, 1080), (720, 1280)],
+            "720x1280",
+        ),
+        (
+            "https://www.instagram.com/reel/Example/",
+            DownloadFormat.AUTO,
+            [(1080, 1080), (720, 1280)],
+            "720x1280",
+        ),
+        (
+            "https://www.tiktok.com/@creator/video/7663144858546277655",
+            DownloadFormat.AUTO,
+            [(1080, 1080)],
+            "1080x1080",
+        ),
+        (
+            "https://youtu.be/Example1234",
+            DownloadFormat.P360,
+            [(360, 360), (720, 1280)],
+            "360x360",
+        ),
+    ],
+)
+@pytest.mark.parametrize("split_audio", [False, True])
+def test_download_keeps_portrait_variant_when_available(
+    url, selection, dimensions, expected, split_audio, tmp_path, monkeypatch
+):
+    formats = [
+        {
+            "format_id": f"{width}x{height}",
+            "url": f"https://example.com/{width}x{height}.mp4",
+            "ext": "mp4",
+            "vcodec": "avc1",
+            "acodec": "none" if split_audio else "mp4a",
+            "width": width,
+            "height": height,
+        }
+        for width, height in dimensions
+    ]
+    if split_audio:
+        formats.append(
+            {
+                "format_id": "audio",
+                "url": "https://example.com/audio.m4a",
+                "ext": "m4a",
+                "vcodec": "none",
+                "acodec": "mp4a",
+            }
+        )
+
+    def extract_info(self, url, *, download):
+        result = self.process_ie_result(
+            {
+                "id": "portrait",
+                "title": "Example",
+                "webpage_url": url,
+                "formats": formats,
+            },
+            download=False,
+        )
+        (tmp_path / "video.mp4").write_text(result["format_id"], encoding="utf-8")
+        return result
+
+    monkeypatch.setattr(YoutubeDL, "extract_info", extract_info)
+    result = download(url, tmp_path, 1000, 1200, None, selection)
+
+    assert (tmp_path / result["filename"]).read_text(encoding="utf-8") == (
+        f"{expected}+audio" if split_audio else expected
+    )

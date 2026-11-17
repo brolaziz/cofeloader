@@ -17,7 +17,11 @@ class DownloadFormat(StrEnum):
         return int(self) if self.isdecimal() else None
 
     def cache_key(self, key: str, platform: str) -> str:
+        if self is self.MP3:
+            return f"{self}:{key}"
         if self is self.AUTO and platform != "YouTube":
-            # Cached copies from before native downloads can have lower quality.
-            return f"original:{key}"
-        return key if self is self.AUTO else f"{self}:{key}"
+            key = f"original:{key}"
+        elif self is not self.AUTO:
+            key = f"{self}:{key}"
+        # Older file IDs may refer to square copies or omit display dimensions.
+        return f"video:v2:{key}"

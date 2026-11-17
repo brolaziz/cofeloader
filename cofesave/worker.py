@@ -2,6 +2,9 @@
 
 import argparse
 import json
+import subprocess
+from contextlib import suppress
+from fractions import Fraction
 from pathlib import Path
 
 from yt_dlp import YoutubeDL
@@ -38,7 +41,7 @@ def options(directory: Path, max_bytes: int, max_duration: int, cookies: str | N
 
     # Prefer H.264 MP4 + AAC, falling back to a combined MP4 with audio.
     # Size filters help select smaller formats; the parent also enforces disk and time limits.
-    video = f"[height<=?720][filesize_approx<=?{max_bytes}]"
+    video = f"[filesize_approx<=?{max_bytes}]"
     return {
         "format": (
             f"bv[ext=mp4][vcodec^=avc1]{video}+ba[ext=m4a]/"
@@ -86,12 +89,63 @@ def error_code(message: str) -> str:
     return "unavailable"
 
 
-def fits_resolution(media_format: dict, limit: int) -> bool:
+def fits_resolution(media_format: dict, limit: int, *, allow_unknown: bool) -> bool:
     if media_format.get("vcodec") == "none":
         return True
-    dimensions = (media_format.get("height") or 0, media_format.get("width") or 0)
-    # For a vertical video the shorter dimension is its width.
-    return any(0 < dimension <= limit for dimension in dimensions)
+    dimensions = (media_format.get("width") or 0, media_format.get("height") or 0)
+    known = [dimension for dimension in dimensions if dimension > 0]
+    # Resolution is the shorter side, so 720x1280 also fits a 720p limit.
+    return min(known) <= limit if known else allow_unknown
+
+
+def is_nine_by_sixteen(media_format: dict) -> bool:
+    width, height = media_format.get("width"), media_format.get("height")
+    # Some encoders round scaled dimensions to even pixels.
+    return bool(width and height and height > width and abs(width * 16 - height * 9) <= 16)
+
+
+def video_dimensions(path: Path) -> dict[str, int]:
+    """Read display dimensions from the downloaded video stream."""
+    try:
+        probe = subprocess.run(
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-f",
+                "mov",
+                "-protocol_whitelist",
+                "file",
+                "-select_streams",
+                "V:0",
+                "-show_entries",
+                "stream=width,height,sample_aspect_ratio:stream_side_data=rotation",
+                "-of",
+                "json",
+                str(path),
+            ],
+            check=True,
+            capture_output=True,
+            timeout=5,
+        )
+        streams = json.loads(probe.stdout).get("streams", [])
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return {}
+    if not streams:
+        return {}
+    stream = streams[0]
+    width, height = stream.get("width"), stream.get("height")
+    if not width or not height:
+        return {}
+    pixel_ratio = stream.get("sample_aspect_ratio")
+    if pixel_ratio:
+        with suppress(ValueError, ZeroDivisionError):
+            scaled_width = round(width * Fraction(pixel_ratio.replace(":", "/")))
+            if scaled_width > 0:
+                width = scaled_width
+    if any(side.get("rotation", 0) % 180 == 90 for side in stream.get("side_data_list", [])):
+        width, height = height, width
+    return {"width": width, "height": height}
 
 
 def download(
@@ -126,12 +180,31 @@ def download(
         config["format"] = f"bv*[ext=mp4][vcodec^=avc1]{size}+ba[ext=m4a]{size}/b[ext=mp4]{size}"
         config["format_sort"] = ["res"]
     with YoutubeDL(config) as downloader:
-        if resolution is not None:
+        if selection is not DownloadFormat.MP3:
             selector = downloader.format_selector
+            limit = 720 if selection is DownloadFormat.AUTO and not original else resolution
 
             def select_video(context):
-                formats = [fmt for fmt in context["formats"] if fits_resolution(fmt, resolution)]
-                return selector({**context, "formats": formats})
+                formats = context["formats"]
+                if limit is not None:
+                    formats = [
+                        fmt
+                        for fmt in formats
+                        if fits_resolution(
+                            fmt, limit, allow_unknown=selection is DownloadFormat.AUTO
+                        )
+                    ]
+                selected = list(selector({**context, "formats": formats}))
+                if not selected:
+                    return selected
+                width = selected[0].get("width")
+                if not width or width != selected[0].get("height"):
+                    return selected
+                # Keep the existing codec, audio and size rules for the portrait alternative.
+                portrait = [
+                    fmt for fmt in formats if fmt.get("vcodec") == "none" or is_nine_by_sixteen(fmt)
+                ]
+                return list(selector({**context, "formats": portrait})) or selected
 
             downloader.format_selector = select_video
         info = downloader.extract_info(link.url, download=True)
@@ -150,6 +223,8 @@ def download(
     if path.stat().st_size > max_bytes:
         return {"error": "size"}
     result = {"filename": path.name, "title": str(info.get("title") or "Video")[:180]}
+    if extension == "mp4":
+        result.update(video_dimensions(path))
     if link.platform == "TikTok" and isinstance(info.get("id"), str):
         result["tiktok_id"] = info["id"]
     return result

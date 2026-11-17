@@ -166,6 +166,8 @@ class JobManager:
                 sent = await message.answer_video(
                     upload,
                     caption=description,
+                    width=video.width,
+                    height=video.height,
                     supports_streaming=True,
                     request_timeout=self.settings.upload_timeout,
                 )

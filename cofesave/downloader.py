@@ -39,6 +39,8 @@ class DownloadedVideo:
     path: Path
     title: str
     tiktok_id: str | None = None
+    width: int | None = None
+    height: int | None = None
 
 
 async def resolve_tiktok_short_link(link: VideoLink) -> VideoLink:
@@ -79,7 +81,13 @@ def read_result(directory: Path, max_bytes: int) -> DownloadedVideo:
         raise DownloadFailure("unavailable")
     if path.stat().st_size > max_bytes:
         raise DownloadFailure("size")
-    return DownloadedVideo(path, result["title"], result.get("tiktok_id"))
+    return DownloadedVideo(
+        path,
+        result["title"],
+        result.get("tiktok_id"),
+        width=result.get("width"),
+        height=result.get("height"),
+    )
 
 
 async def stop_process(process: asyncio.subprocess.Process) -> None:
